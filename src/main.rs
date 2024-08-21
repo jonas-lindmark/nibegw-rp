@@ -8,11 +8,14 @@ use defmt::info;
 use embassy_executor::Spawner;
 use embassy_rp::{bind_interrupts, pio, uart};
 use embassy_rp::gpio::{Level, Output};
-use embassy_rp::peripherals::{self, PIO0, UART1};
+use embassy_rp::peripherals::{self, PIO0, UART0, UART1};
+use embassy_rp::uart::BufferedUart;
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_time::{Duration, Timer};
+use modbus_core::rtu;
+use static_cell::StaticCell;
 
 #[allow(unused_imports)]
 use {defmt_rtt as _, panic_probe as _};
@@ -25,7 +28,7 @@ static WATCHDOG_COUNTER: Mutex<ThreadModeRawMutex, RefCell<u32>> = Mutex::new(Re
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => pio::InterruptHandler<PIO0>;
-    UART1_IRQ => uart::BufferedInterruptHandler<UART1>;
+    UART0_IRQ => uart::BufferedInterruptHandler<UART0>;
 });
 
 assign_resources! {
@@ -37,9 +40,10 @@ assign_resources! {
         pio: PIO0,
         dma_ch: DMA_CH0,
     }
-    han: HanResources {
-        rx_pin: PIN_9,
-        uart: UART1,
+    uart: UartResources {
+        tx_pin: PIN_16,
+        rx_pin: PIN_17,
+        uart: UART0,
     }
     watchdog: WatchdogResources {
         watchdog: WATCHDOG,
@@ -88,6 +92,14 @@ fn clear_watchdog() {
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
     let r = split_resources!(p);
+
+
+    static TX_BUF: StaticCell<[u8; 16]> = StaticCell::new();
+    let tx_buf = &mut TX_BUF.init([0; 16])[..];
+    static RX_BUF: StaticCell<[u8; 16]> = StaticCell::new();
+    let rx_buf = &mut RX_BUF.init([0; 16])[..];
+    let uart = BufferedUart::new(r.uart.uart, Irqs, r.uart.tx_pin, r.uart.rx_pin, tx_buf, rx_buf, Config::default());
+    let (mut tx, rx) = uart.split();
 
     let mut led_green = Output::new(r.led.green, Level::Low);
     let mut led_red = Output::new(r.led.red, Level::Low);

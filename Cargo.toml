@@ -11,11 +11,11 @@ embassy-sync = { version = "0.6.0", features = ["defmt"] }
 embassy-executor = { version = "0.5.0", features = ["task-arena-size-98304", "arch-cortex-m", "executor-thread", "executor-interrupt", "defmt", "integrated-timers"] }
 embassy-time = { version = "0.3.1", features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-rp = { version = "0.1.0", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl"] }
-embassy-usb = { version = "0.2.0", features = ["defmt"] }
+#embassy-usb = { version = "0.2.0", features = ["defmt"] }
 embassy-net = { version = "0.4.0", features = ["defmt", "tcp", "udp", "raw", "dhcpv4", "medium-ethernet", "dns"] }
 embassy-net-wiznet = { version = "0.1.0", features = ["defmt"] }
 embassy-futures = { version = "0.1.0" }
-embassy-usb-logger = { version = "0.2.0" }
+#embassy-usb-logger = { version = "0.2.0" }
 cyw43 = { version = "0.1.0", features = ["defmt", "firmware-logs"] }
 cyw43-pio = { version = "0.1.0", features = ["defmt", "overclock"] }
 
@@ -46,9 +46,8 @@ pio = "0.2.1"
 rand = { version = "0.8.5", default-features = false }
 
 format_no_std = "1.2.0"
-
 assign-resources = { git = "https://github.com/adamgreig/assign-resources", rev = "94ad10e2729afdf0fd5a77cd12e68409a982f58a" }
-
+modbus-core = { version = "*", default-features = false, features = ["rtu"] }
 
 [profile.release]
 debug = 2
@@ -66,4 +65,3 @@ embassy-futures = { git = "https://github.com/embassy-rs/embassy", rev = "ed3da1
 embassy-usb-logger = { git = "https://github.com/embassy-rs/embassy", rev = "ed3da1721a4f704d3f2a8a1cf84d9fc051c71945" }
 cyw43 = { git = "https://github.com/embassy-rs/embassy", rev = "ed3da1721a4f704d3f2a8a1cf84d9fc051c71945" }
 cyw43-pio = { git = "https://github.com/embassy-rs/embassy", rev = "ed3da1721a4f704d3f2a8a1cf84d9fc051c71945" }
-han = { git = "https://github.com/akeamc/han", rev = "d773719798bfdd12693833e7c07435e62f113946" }
