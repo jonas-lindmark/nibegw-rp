@@ -1,6 +1,6 @@
 [package]
 edition = "2021"
-name = "nibegw-rs"
+name = "nibegw-rp"
 version = "0.1.0"
 authors = ["Jonas Lindmark <jonas@denacode.se>"]
 resolver = "2"
