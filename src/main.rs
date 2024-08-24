@@ -4,31 +4,38 @@
 use core::cell::RefCell;
 
 use assign_resources::assign_resources;
-use defmt::info;
+use defmt::{debug, error, info};
 use embassy_executor::Spawner;
+use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_rp::{bind_interrupts, pio, uart};
 use embassy_rp::gpio::{Level, Output};
-use embassy_rp::peripherals::{self, PIO0, UART0, UART1};
-use embassy_rp::uart::BufferedUart;
+use embassy_rp::peripherals::{self, PIO0, UART1};
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_time::{Duration, Timer};
-use modbus_core::rtu;
-use static_cell::StaticCell;
+use embedded_io_async::Write;
 
 #[allow(unused_imports)]
 use {defmt_rtt as _, panic_probe as _};
 
+use crate::reader::{AsyncReader, Error};
+use crate::serial::init_serial;
 use crate::wifi::init_wifi;
 
 mod wifi;
+mod serial;
+mod reader;
+
+const ACK: u8 = 0x06;
+const NACK: u8 = 0x15;
+
 
 static WATCHDOG_COUNTER: Mutex<ThreadModeRawMutex, RefCell<u32>> = Mutex::new(RefCell::new(0));
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => pio::InterruptHandler<PIO0>;
-    UART0_IRQ => uart::BufferedInterruptHandler<UART0>;
+    UART1_IRQ => uart::BufferedInterruptHandler<UART1>;
 });
 
 assign_resources! {
@@ -41,16 +48,16 @@ assign_resources! {
         dma_ch: DMA_CH0,
     }
     uart: UartResources {
-        tx_pin: PIN_16,
-        rx_pin: PIN_17,
-        uart: UART0,
+        tx_pin: PIN_8,
+        rx_pin: PIN_9,
+        uart: UART1,
     }
     watchdog: WatchdogResources {
         watchdog: WATCHDOG,
     }
     led: LedResources {
-        green: PIN_2,
-        red: PIN_3,
+        green: PIN_26,
+        red: PIN_27,
     }
 }
 
@@ -93,14 +100,6 @@ async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
     let r = split_resources!(p);
 
-
-    static TX_BUF: StaticCell<[u8; 16]> = StaticCell::new();
-    let tx_buf = &mut TX_BUF.init([0; 16])[..];
-    static RX_BUF: StaticCell<[u8; 16]> = StaticCell::new();
-    let rx_buf = &mut RX_BUF.init([0; 16])[..];
-    let uart = BufferedUart::new(r.uart.uart, Irqs, r.uart.tx_pin, r.uart.rx_pin, tx_buf, rx_buf, Config::default());
-    let (mut tx, rx) = uart.split();
-
     let mut led_green = Output::new(r.led.green, Level::Low);
     let mut led_red = Output::new(r.led.red, Level::Low);
 
@@ -111,16 +110,52 @@ async fn main(spawner: Spawner) {
     let (mut control, stack) = init_wifi(spawner, r.wifi).await;
     control.gpio_set(0, true).await;
 
+    let mut rx_buffer = [0; 4096];
+    let mut tx_buffer = [0; 4096];
+    let mut rx_meta = [PacketMetadata::EMPTY; 16];
+    let mut tx_meta = [PacketMetadata::EMPTY; 16];
+    let mut socket = UdpSocket::new(stack, &mut rx_meta, &mut rx_buffer, &mut tx_meta, &mut tx_buffer);
+    socket.bind(1234).unwrap();
+
     control.gpio_set(0, false).await;
 
     led_red.set_low();
 
+    let (rx, mut tx) = init_serial(r.uart).await.split();
+
+    let mut reader = AsyncReader::new(rx);
+
     loop {
         clear_watchdog();
 
-        Timer::after(Duration::from_secs(1)).await;
-
-        flash_led(&mut led_green).await;
+        match reader.next_message().await {
+            Ok(opt) => {
+                match opt {
+                    Some(message) => {
+                        // forward to UDP
+                        //socket.send_to(message.raw_frame(), )
+                        tx.write(&[ACK]).await.unwrap();
+                        flash_led(&mut led_green).await;
+                    }
+                    None => {
+                        debug!("Found no message");
+                    }
+                }
+            }
+            Err(error) => {
+                match error {
+                    Error::ReadError(err) => {
+                        error!("Read error {:?}", err);
+                        // nack?
+                    }
+                    Error::ChecksumMismatch => {
+                        error!("Checksum mismatch");
+                        tx.write(&[NACK]).await.unwrap();
+                    }
+                }
+                flash_led(&mut led_red).await;
+            }
+        }
     }
 }
 
