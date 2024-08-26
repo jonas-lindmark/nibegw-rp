@@ -6,7 +6,6 @@ use core::cell::RefCell;
 use assign_resources::assign_resources;
 use defmt::{debug, error, info};
 use embassy_executor::Spawner;
-use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_rp::{bind_interrupts, pio, uart};
 use embassy_rp::gpio::{Level, Output};
 use embassy_rp::peripherals::{self, PIO0, UART1};
@@ -19,6 +18,7 @@ use embedded_io_async::Write;
 #[allow(unused_imports)]
 use {defmt_rtt as _, panic_probe as _};
 
+use crate::network::{init_network, remote_endpoint};
 use crate::reader::{AsyncReader, Error};
 use crate::serial::init_serial;
 use crate::wifi::init_wifi;
@@ -26,10 +26,10 @@ use crate::wifi::init_wifi;
 mod wifi;
 mod serial;
 mod reader;
+mod network;
 
 const ACK: u8 = 0x06;
 const NACK: u8 = 0x15;
-
 
 static WATCHDOG_COUNTER: Mutex<ThreadModeRawMutex, RefCell<u32>> = Mutex::new(RefCell::new(0));
 
@@ -110,12 +110,12 @@ async fn main(spawner: Spawner) {
     let (mut control, stack) = init_wifi(spawner, r.wifi).await;
     control.gpio_set(0, true).await;
 
-    let mut rx_buffer = [0; 4096];
-    let mut tx_buffer = [0; 4096];
-    let mut rx_meta = [PacketMetadata::EMPTY; 16];
-    let mut tx_meta = [PacketMetadata::EMPTY; 16];
-    let mut socket = UdpSocket::new(stack, &mut rx_meta, &mut rx_buffer, &mut tx_meta, &mut tx_buffer);
-    socket.bind(1234).unwrap();
+
+    let mut sockets = init_network(&stack);
+    sockets.local_read_socket.bind(9999).unwrap();
+    sockets.local_write_socket.bind(10000).unwrap();
+
+    let remote_endpoint = remote_endpoint();
 
     control.gpio_set(0, false).await;
 
@@ -133,7 +133,9 @@ async fn main(spawner: Spawner) {
                 match opt {
                     Some(message) => {
                         // forward to UDP
-                        //socket.send_to(message.raw_frame(), )
+                        if let Err(err) = sockets.remote_socket.send_to(message.raw_frame(), remote_endpoint).await {
+                            error!("Failed to send UDP packet: {:?}", err);
+                        };
                         tx.write(&[ACK]).await.unwrap();
                         flash_led(&mut led_green).await;
                     }
