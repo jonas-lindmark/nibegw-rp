@@ -2,6 +2,7 @@ use defmt::debug;
 use embedded_io_async::BufRead;
 
 use crate::reader::Error::{ChecksumMismatch, ReadError};
+use crate::START;
 
 pub struct Message {
     pub length: usize,
@@ -69,8 +70,9 @@ impl<R> AsyncReader<R>
                     }
 
                     for (i, &b) in buf.iter().enumerate() {
+                        //debug!("{=u8:x}", b);
                         if buffer.pos >= buffer.data.len() {
-                            self.reader.consume(i);
+                            self.reader.consume(i+1);
                             self.buffer = None;
                             break 'fill_buf; // buffer overflow
                         }
@@ -78,15 +80,17 @@ impl<R> AsyncReader<R>
                         buffer.data[buffer.pos] = b;
 
                         if buffer.pos == 4 {
+                            debug!("Message len: {}", b);
                             buffer.len = Some(b as usize + 6); // 5 byte header + checksum
                         }
 
-                        if buffer.len.is_some_and(|len| buffer.pos >= len) {
-                            self.reader.consume(i);
-                            let checksum = compute_checksum(&buffer.data[1..buffer.pos]);
-                            debug!("Read message: {=[?]}", &buffer.data[..buffer.pos+1]);
+                        if buffer.len.is_some_and(|len| buffer.pos >= len - 1) {
+                            self.reader.consume(i+1);
+                            let checksum = compute_checksum(&buffer.data[1..buffer.pos-1]);
+                            debug!("Read message: {=[u8]:02x}", &buffer.data[..buffer.pos+1]);
                             if checksum != b {
-                                debug!("Computed checksum {} != {}", checksum, b);
+                                debug!("Computed checksum {=u8:x} != {=u8:x}", checksum, b);
+                                self.buffer = None;
                                 return Err(ChecksumMismatch);
                             }
                             let readout = Message {
@@ -106,6 +110,7 @@ impl<R> AsyncReader<R>
                 None => match scan_to_next(&mut self.reader).await
                     .map_err(|e| ReadError(e))? {
                     Some(buffer) => {
+                        debug!("new buffer");
                         self.buffer = Some(buffer);
                     }
                     None => return Ok(None),
@@ -131,10 +136,11 @@ async fn scan_to_next<R>(reader: &mut R) -> Result<Option<Buffer>, R::Error>
             return Ok(None);
         }
 
-        if let Some(start) = buf.iter().position(|b| *b == 0x05) {
+        if let Some(start) = buf.iter().position(|b| *b == START) {
             reader.consume(start);
             return Ok(Some(Buffer::new()));
         } else {
+            debug!("Skip {=[u8]:02x}", buf);
             reader.consume(n);
         }
     }

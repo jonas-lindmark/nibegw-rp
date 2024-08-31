@@ -4,11 +4,13 @@
 use core::cell::RefCell;
 
 use assign_resources::assign_resources;
+use cortex_m::prelude::_embedded_hal_blocking_serial_Write;
 use defmt::{debug, error, info};
 use embassy_executor::Spawner;
 use embassy_rp::{bind_interrupts, pio, uart};
 use embassy_rp::gpio::{Level, Output};
 use embassy_rp::peripherals::{self, PIO0, UART1};
+use embassy_rp::uart::BufferedUartTx;
 use embassy_rp::watchdog::Watchdog;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
@@ -28,6 +30,7 @@ mod serial;
 mod reader;
 mod network;
 
+const START: u8 = 0x5c;
 const ACK: u8 = 0x06;
 const NACK: u8 = 0x15;
 
@@ -52,12 +55,15 @@ assign_resources! {
         rx_pin: PIN_9,
         uart: UART1,
     }
+    uart_dir: UartDirResources {
+        dir_pin:  PIN_10,
+    }
     watchdog: WatchdogResources {
         watchdog: WATCHDOG,
     }
     led: LedResources {
-        green: PIN_26,
-        red: PIN_27,
+        green: PIN_27,
+        red: PIN_26,
     }
 }
 
@@ -105,15 +111,15 @@ async fn main(spawner: Spawner) {
 
     led_red.set_high();
 
-    spawner.spawn(watchdog_task(r.watchdog)).unwrap();
+    //spawner.spawn(watchdog_task(r.watchdog)).unwrap();
+
+    let mut uart_dir_pin = Output::new(r.uart_dir.dir_pin, Level::Low);
 
     let (mut control, stack) = init_wifi(spawner, r.wifi).await;
     control.gpio_set(0, true).await;
 
 
     let mut sockets = init_network(&stack);
-    sockets.local_read_socket.bind(9999).unwrap();
-    sockets.local_write_socket.bind(10000).unwrap();
 
     let remote_endpoint = remote_endpoint();
 
@@ -126,17 +132,17 @@ async fn main(spawner: Spawner) {
     let mut reader = AsyncReader::new(rx);
 
     loop {
-        clear_watchdog();
+        //clear_watchdog();
 
         match reader.next_message().await {
             Ok(opt) => {
                 match opt {
                     Some(message) => {
                         // forward to UDP
-                        if let Err(err) = sockets.remote_socket.send_to(message.raw_frame(), remote_endpoint).await {
+                        if let Err(err) = sockets.read_socket.send_to(message.raw_frame(), remote_endpoint).await {
                             error!("Failed to send UDP packet: {:?}", err);
                         };
-                        tx.write(&[ACK]).await.unwrap();
+                        write_serial(&mut tx, &[ACK], &mut uart_dir_pin).await;
                         flash_led(&mut led_green).await;
                     }
                     None => {
@@ -152,7 +158,7 @@ async fn main(spawner: Spawner) {
                     }
                     Error::ChecksumMismatch => {
                         error!("Checksum mismatch");
-                        tx.write(&[NACK]).await.unwrap();
+                        write_serial(&mut tx, &[NACK], &mut uart_dir_pin).await;
                     }
                 }
                 flash_led(&mut led_red).await;
@@ -167,3 +173,11 @@ async fn flash_led(led: &mut Output<'_>) {
     led.set_low();
 }
 
+async fn write_serial(tx: &mut BufferedUartTx<'_, UART1>, buf: &[u8], dir_pin: &mut Output<'_>) {
+    dir_pin.set_high();
+    tx.write_all(buf).await.unwrap();
+    while tx.busy() {
+        Timer::after(Duration::from_micros(100)).await;
+    }
+    dir_pin.set_low();
+}
