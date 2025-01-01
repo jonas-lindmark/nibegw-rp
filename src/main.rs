@@ -4,6 +4,7 @@
 use core::cell::RefCell;
 
 use assign_resources::assign_resources;
+use cortex_m::asm::nop;
 use cortex_m::prelude::_embedded_hal_blocking_serial_Write;
 use defmt::{debug, error, info};
 use embassy_executor::Spawner;
@@ -184,7 +185,7 @@ async fn write_serial(tx: &mut BufferedUartTx<'_, UART1>, buf: &[u8], dir_pin: &
     dir_pin.set_high();
     tx.write_all(buf).await.unwrap();
     while tx.busy() {
-        Timer::after(Duration::from_micros(100)).await;
+        nop(); // timer is too inaccurate and may cause too long wait interfering with next read
     }
     dir_pin.set_low();
 }
