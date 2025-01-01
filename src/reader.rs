@@ -32,7 +32,10 @@ impl Buffer {
     }
 }
 
-pub enum Error<R> where R: BufRead {
+pub enum Error<R>
+where
+    R: BufRead,
+{
     ChecksumMismatch,
     ReadError(R::Error),
 }
@@ -43,8 +46,8 @@ pub struct AsyncReader<R> {
 }
 
 impl<R> AsyncReader<R>
-    where
-        R: BufRead,
+where
+    R: BufRead,
 {
     /// Construct a new AsyncReader from a byte reader.
     pub fn new(reader: R) -> Self {
@@ -61,8 +64,7 @@ impl<R> AsyncReader<R>
         loop {
             match self.buffer {
                 Some(ref mut buffer) => 'fill_buf: loop {
-                    let buf = self.reader.fill_buf().await
-                        .map_err(|e| ReadError(e))?;
+                    let buf = self.reader.fill_buf().await.map_err(|e| ReadError(e))?;
                     let n = buf.len();
 
                     if n == 0 {
@@ -72,7 +74,7 @@ impl<R> AsyncReader<R>
                     for (i, &b) in buf.iter().enumerate() {
                         //debug!("{=u8:x}", b);
                         if buffer.pos >= buffer.data.len() {
-                            self.reader.consume(i+1);
+                            self.reader.consume(i + 1);
                             self.buffer = None;
                             break 'fill_buf; // buffer overflow
                         }
@@ -85,9 +87,9 @@ impl<R> AsyncReader<R>
                         }
 
                         if buffer.len.is_some_and(|len| buffer.pos >= len - 1) {
-                            self.reader.consume(i+1);
-                            let checksum = compute_checksum(&buffer.data[1..buffer.pos-1]);
-                            debug!("Read message: {=[u8]:02x}", &buffer.data[..buffer.pos+1]);
+                            self.reader.consume(i + 1);
+                            let checksum = compute_checksum(&buffer.data[1..buffer.pos - 1]);
+                            debug!("Read message: {=[u8]:02x}", &buffer.data[..buffer.pos + 1]);
                             if checksum != b {
                                 debug!("Computed checksum {=u8:x} != {=u8:x}", checksum, b);
                                 self.buffer = None;
@@ -107,8 +109,10 @@ impl<R> AsyncReader<R>
 
                     self.reader.consume(n);
                 },
-                None => match scan_to_next(&mut self.reader).await
-                    .map_err(|e| ReadError(e))? {
+                None => match scan_to_next(&mut self.reader)
+                    .await
+                    .map_err(|e| ReadError(e))?
+                {
                     Some(buffer) => {
                         debug!("new buffer");
                         self.buffer = Some(buffer);
@@ -124,10 +128,9 @@ fn compute_checksum(data: &[u8]) -> u8 {
     data.iter().fold(0, |acc, b| acc ^ b)
 }
 
-
 async fn scan_to_next<R>(reader: &mut R) -> Result<Option<Buffer>, R::Error>
-    where
-        R: BufRead,
+where
+    R: BufRead,
 {
     loop {
         let buf = reader.fill_buf().await?;

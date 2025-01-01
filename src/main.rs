@@ -7,13 +7,13 @@ use assign_resources::assign_resources;
 use cortex_m::prelude::_embedded_hal_blocking_serial_Write;
 use defmt::{debug, error, info};
 use embassy_executor::Spawner;
-use embassy_rp::{bind_interrupts, pio, uart};
 use embassy_rp::gpio::{Level, Output};
 use embassy_rp::peripherals::{self, PIO0, UART1};
 use embassy_rp::uart::BufferedUartTx;
 use embassy_rp::watchdog::Watchdog;
-use embassy_sync::blocking_mutex::Mutex;
+use embassy_rp::{bind_interrupts, pio, uart};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::blocking_mutex::Mutex;
 use embassy_time::{Duration, Timer};
 use embedded_io_async::Write;
 
@@ -25,10 +25,10 @@ use crate::reader::{AsyncReader, Error};
 use crate::serial::init_serial;
 use crate::wifi::init_wifi;
 
-mod wifi;
-mod serial;
-mod reader;
 mod network;
+mod reader;
+mod serial;
+mod wifi;
 
 const START: u8 = 0x5c;
 const ACK: u8 = 0x06;
@@ -67,12 +67,11 @@ assign_resources! {
     }
 }
 
-
 #[embassy_executor::task]
 async fn watchdog_task(watchdog: WatchdogResources) {
     let mut watchdog = Watchdog::new(watchdog.watchdog);
 
-    // set long timeout initially to not trigger by slow wifi startup
+    // set long timeout initially to not trigger by slow Wi-Fi startup
     watchdog.start(Duration::from_millis(8_300));
     Timer::after(Duration::from_millis(8_000)).await;
 
@@ -118,7 +117,6 @@ async fn main(spawner: Spawner) {
     let (mut control, stack) = init_wifi(spawner, r.wifi).await;
     control.gpio_set(0, true).await;
 
-
     let mut sockets = init_network(&stack);
 
     let remote_endpoint = remote_endpoint();
@@ -139,8 +137,16 @@ async fn main(spawner: Spawner) {
                 match opt {
                     Some(message) => {
                         // forward to UDP
-                        debug!("Sending to {:?}: {=[u8]:02x}", remote_endpoint, message.raw_frame());
-                        if let Err(err) = sockets.read_socket.send_to(message.raw_frame(), remote_endpoint).await {
+                        debug!(
+                            "Sending to {:?}: {=[u8]:02x}",
+                            remote_endpoint,
+                            message.raw_frame()
+                        );
+                        if let Err(err) = sockets
+                            .read_socket
+                            .send_to(message.raw_frame(), remote_endpoint)
+                            .await
+                        {
                             error!("Failed to send UDP packet: {:?}", err);
                         };
                         write_serial(&mut tx, &[ACK], &mut uart_dir_pin).await;

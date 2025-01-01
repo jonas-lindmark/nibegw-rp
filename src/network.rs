@@ -1,7 +1,7 @@
 use core::str::FromStr;
 use cyw43::NetDriver;
-use embassy_net::{Ipv4Address, Stack};
 use embassy_net::udp::{PacketMetadata, UdpSocket};
+use embassy_net::{Ipv4Address, Stack};
 use static_cell::StaticCell;
 
 const REMOTE_IP: &str = env!("REMOTE_IP");
@@ -32,16 +32,12 @@ impl SocketResources {
     }
 }
 
-
 pub fn remote_endpoint() -> (Ipv4Address, u16) {
     let address = Ipv4Address::from_str(REMOTE_IP).unwrap();
     (address, REMOTE_PORT.parse::<u16>().unwrap())
 }
 
-
-pub fn init_network<'a>(
-    stack: &'a Stack<NetDriver<'a>>) -> NetworkSockets {
-
+pub fn init_network<'a>(stack: &'a Stack<NetDriver<'a>>) -> NetworkSockets {
     static READ_SOCKET_RESOURCES: StaticCell<SocketResources> = StaticCell::new();
     let read_resources = &mut *READ_SOCKET_RESOURCES.init(SocketResources::new());
     let mut read_socket = UdpSocket::new(
@@ -51,7 +47,9 @@ pub fn init_network<'a>(
         &mut read_resources.tx_meta,
         &mut read_resources.tx_buffer,
     );
-    read_socket.bind(LOCAL_READ_PORT.parse::<u16>().unwrap()).unwrap();
+    read_socket
+        .bind(LOCAL_READ_PORT.parse::<u16>().unwrap())
+        .unwrap();
 
     static WRITE_SOCKET_RESOURCES: StaticCell<SocketResources> = StaticCell::new();
     let write_resources = &mut *WRITE_SOCKET_RESOURCES.init(SocketResources::new());
@@ -62,8 +60,12 @@ pub fn init_network<'a>(
         &mut write_resources.tx_meta,
         &mut write_resources.tx_buffer,
     );
-    write_socket.bind(LOCAL_WRITE_PORT.parse::<u16>().unwrap()).unwrap();
+    write_socket
+        .bind(LOCAL_WRITE_PORT.parse::<u16>().unwrap())
+        .unwrap();
 
-
-    NetworkSockets { read_socket, write_socket }
+    NetworkSockets {
+        read_socket,
+        write_socket,
+    }
 }
