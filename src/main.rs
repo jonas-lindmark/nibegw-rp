@@ -139,6 +139,7 @@ async fn main(spawner: Spawner) {
                 match opt {
                     Some(message) => {
                         // forward to UDP
+                        debug!("Sending to {:?}: {=[u8]:02x}", remote_endpoint, message.raw_frame());
                         if let Err(err) = sockets.read_socket.send_to(message.raw_frame(), remote_endpoint).await {
                             error!("Failed to send UDP packet: {:?}", err);
                         };
