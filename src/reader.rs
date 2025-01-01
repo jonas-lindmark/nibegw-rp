@@ -1,6 +1,6 @@
 use defmt::debug;
 use embedded_io_async::BufRead;
-
+use log::warn;
 use crate::reader::Error::{ChecksumMismatch, ReadError};
 use crate::START;
 
@@ -76,7 +76,8 @@ where
                         if buffer.pos >= buffer.data.len() {
                             self.reader.consume(i + 1);
                             self.buffer = None;
-                            break 'fill_buf; // buffer overflow
+                            warn!("Buffer overflow");
+                            break 'fill_buf;
                         }
 
                         buffer.data[buffer.pos] = b;
@@ -88,7 +89,7 @@ where
 
                         if buffer.len.is_some_and(|len| buffer.pos >= len - 1) {
                             self.reader.consume(i + 1);
-                            let checksum = compute_checksum(&buffer.data[1..buffer.pos - 1]);
+                            let checksum = compute_checksum(&buffer.data[1..buffer.pos]);
                             debug!("Read message: {=[u8]:02x}", &buffer.data[..buffer.pos + 1]);
                             if checksum != b {
                                 debug!("Computed checksum {=u8:x} != {=u8:x}", checksum, b);
@@ -125,6 +126,7 @@ where
 }
 
 fn compute_checksum(data: &[u8]) -> u8 {
+    debug!("Computing checksum on: {=[u8]:02x}", &data);
     data.iter().fold(0, |acc, b| acc ^ b)
 }
 
