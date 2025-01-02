@@ -83,16 +83,13 @@ where
                         buffer.data[buffer.pos] = b;
 
                         if buffer.pos == 4 {
-                            debug!("Message len: {}", b);
                             buffer.len = Some(b as usize + 6); // 5 byte header + checksum
                         }
 
                         if buffer.len.is_some_and(|len| buffer.pos >= len - 1) {
                             self.reader.consume(i + 1);
-                            let checksum = compute_checksum(&buffer.data[1..buffer.pos]);
                             debug!("Read message: {=[u8]:02x}", &buffer.data[..buffer.pos + 1]);
-                            if checksum != b {
-                                debug!("Computed checksum {=u8:x} != {=u8:x}", checksum, b);
+                            if !is_valid_checksum(&buffer.data[1..buffer.pos], b) {
                                 self.buffer = None;
                                 return Err(ChecksumMismatch);
                             }
@@ -125,9 +122,21 @@ where
     }
 }
 
-fn compute_checksum(data: &[u8]) -> u8 {
-    debug!("Computing checksum on: {=[u8]:02x}", &data);
+pub fn compute_checksum(data: &[u8]) -> u8 {
     data.iter().fold(0, |acc, b| acc ^ b)
+}
+
+fn is_valid_checksum(data: &[u8], message_checksum: u8) -> bool {
+    let computed_checksum = compute_checksum(data);
+    if computed_checksum == message_checksum {
+        return true;
+    }
+    // if checksum is 0x5c (start character), heat pump seems to send 0xc5 checksum
+    if computed_checksum == 0x5c && message_checksum == 0xc5 {
+        return true;
+    }
+    debug!("Computed checksum {=u8:x} != {=u8:x}", computed_checksum, message_checksum);
+    false
 }
 
 async fn scan_to_next<R>(reader: &mut R) -> Result<Option<Buffer>, R::Error>

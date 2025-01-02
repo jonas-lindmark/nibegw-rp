@@ -10,6 +10,7 @@ const LOCAL_READ_PORT: &str = env!("LOCAL_READ_PORT");
 const LOCAL_WRITE_PORT: &str = env!("LOCAL_WRITE_PORT");
 
 pub struct NetworkSockets<'a> {
+    pub send_socket: UdpSocket<'a>,
     pub read_socket: UdpSocket<'a>,
     pub write_socket: UdpSocket<'a>,
 }
@@ -37,7 +38,18 @@ pub fn remote_endpoint() -> (Ipv4Address, u16) {
     (address, REMOTE_PORT.parse::<u16>().unwrap())
 }
 
-pub fn init_network<'a>(stack: &'a Stack<NetDriver<'a>>) -> NetworkSockets {
+pub fn init_network<'a>(stack: &'a Stack<NetDriver<'a>>) -> NetworkSockets<'a> {
+    static SEND_SOCKET_RESOURCES: StaticCell<SocketResources> = StaticCell::new();
+    let send_resources = &mut *SEND_SOCKET_RESOURCES.init(SocketResources::new());
+    let mut send_socket = UdpSocket::new(
+        stack,
+        &mut send_resources.rx_meta,
+        &mut send_resources.rx_buffer,
+        &mut send_resources.tx_meta,
+        &mut send_resources.tx_buffer,
+    );
+    send_socket.bind(0).unwrap();
+
     static READ_SOCKET_RESOURCES: StaticCell<SocketResources> = StaticCell::new();
     let read_resources = &mut *READ_SOCKET_RESOURCES.init(SocketResources::new());
     let mut read_socket = UdpSocket::new(
@@ -65,6 +77,7 @@ pub fn init_network<'a>(stack: &'a Stack<NetDriver<'a>>) -> NetworkSockets {
         .unwrap();
 
     NetworkSockets {
+        send_socket,
         read_socket,
         write_socket,
     }
