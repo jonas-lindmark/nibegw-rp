@@ -9,6 +9,8 @@ const REMOTE_PORT: &str = env!("REMOTE_PORT");
 const LOCAL_READ_PORT: &str = env!("LOCAL_READ_PORT");
 const LOCAL_WRITE_PORT: &str = env!("LOCAL_WRITE_PORT");
 
+pub type EndpointType = (Ipv4Address, u16);
+
 pub struct NetworkSockets<'a> {
     pub send_socket: UdpSocket<'a>,
     pub read_socket: UdpSocket<'a>,
@@ -33,7 +35,7 @@ impl SocketResources {
     }
 }
 
-pub fn remote_endpoint() -> (Ipv4Address, u16) {
+pub fn remote_endpoint() -> EndpointType {
     let address = Ipv4Address::from_str(REMOTE_IP).unwrap();
     (address, REMOTE_PORT.parse::<u16>().unwrap())
 }
