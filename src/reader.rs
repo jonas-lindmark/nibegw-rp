@@ -4,15 +4,32 @@ use log::warn;
 use crate::reader::Error::{ChecksumMismatch, ReadError};
 use crate::START;
 
+pub enum MessageType {
+    ReadToken,
+    WriteToken,
+    Other,
+}
+
 pub struct Message {
     pub length: usize,
-    pub address: u16,
     buf: [u8; 2048],
 }
 
 impl Message {
     pub fn raw_frame(&self) -> &[u8] {
         &self.buf[..self.length]
+    }
+    pub fn address(&self) -> u16 {
+        ((self.buf[1] as u16) << 8) | self.buf[2] as u16
+    }
+    pub fn message_type(&self) -> MessageType {
+        let command_and_length = ((self.buf[3] as u16) << 8) | self.buf[4] as u16;
+        debug!("command_and_length: {=u16:04x}", command_and_length);
+        match command_and_length {
+            0x6900 => MessageType::ReadToken,
+            0x6b00 => MessageType::WriteToken,
+            _ => MessageType::Other,
+        }
     }
 }
 
@@ -95,7 +112,6 @@ where
                             }
                             let readout = Message {
                                 length: buffer.len.unwrap(),
-                                address: ((buffer.data[1] as u16) << 8) | buffer.data[2] as u16,
                                 buf: buffer.data,
                             };
                             self.buffer = None;
