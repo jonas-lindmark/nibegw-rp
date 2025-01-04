@@ -15,7 +15,6 @@ use embassy_rp::watchdog::Watchdog;
 use embassy_rp::{bind_interrupts, pio, uart};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::blocking_mutex::Mutex;
-use embassy_sync::channel;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 use embedded_io_async::Write;
@@ -24,7 +23,7 @@ use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
 use crate::network::{init_network, remote_endpoint};
-use crate::reader::{compute_checksum, AsyncReader, Error, MessageType};
+use crate::reader::{AsyncReader, Error, MessageType};
 use crate::serial::init_serial;
 use crate::wifi::init_wifi;
 
@@ -142,9 +141,6 @@ async fn udp_write_task(
     }
 }
 
-#[embassy_executor::task]
-async fn receive_udp_write_task() {}
-
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
@@ -155,7 +151,7 @@ async fn main(spawner: Spawner) {
 
     led_red.set_high();
 
-    //spawner.spawn(watchdog_task(r.watchdog)).unwrap();
+    spawner.spawn(watchdog_task(r.watchdog)).unwrap();
 
     let (mut control, stack) = init_wifi(spawner, r.wifi).await;
     control.gpio_set(0, true).await;
@@ -186,7 +182,8 @@ async fn main(spawner: Spawner) {
 
 
     loop {
-        //clear_watchdog();
+
+        clear_watchdog();
 
         match reader.next_message().await {
             Ok(opt) => match opt {
