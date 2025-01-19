@@ -1,5 +1,4 @@
 use core::str::FromStr;
-use cyw43::NetDriver;
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{Ipv4Address, Stack};
 use static_cell::StaticCell;
@@ -40,7 +39,7 @@ pub fn remote_endpoint() -> EndpointType {
     (address, REMOTE_PORT.parse::<u16>().unwrap())
 }
 
-pub fn init_network<'a>(stack: &'a Stack<NetDriver<'a>>) -> NetworkSockets<'a> {
+pub fn init_network(stack: Stack) -> NetworkSockets {
     static SEND_SOCKET_RESOURCES: StaticCell<SocketResources> = StaticCell::new();
     let send_resources = &mut *SEND_SOCKET_RESOURCES.init(SocketResources::new());
     let mut send_socket = UdpSocket::new(

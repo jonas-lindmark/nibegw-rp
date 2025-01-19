@@ -89,7 +89,7 @@ async fn main(spawner: Spawner) {
     let (mut control, stack) = init_wifi(spawner, r.wifi).await;
     control.gpio_set(0, true).await;
 
-    let sockets = init_network(&stack);
+    let sockets = init_network(stack);
 
     let remote_endpoint = remote_endpoint();
 
@@ -97,7 +97,7 @@ async fn main(spawner: Spawner) {
 
     led_red.set_low();
 
-    let (rx, tx) = init_serial(r.uart).await.split();
+    let (tx, rx) = init_serial(r.uart).await.split();
     let mut uart_tx = SerialTx::new(tx, Output::new(r.uart_dir.dir_pin, Level::Low));
     let mut reader = AsyncReader::new(rx);
 

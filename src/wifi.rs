@@ -1,5 +1,5 @@
-use cyw43::{Control, NetDriver};
-use cyw43_pio::PioSpi;
+use cyw43::{Control, JoinOptions};
+use cyw43_pio::{PioSpi, DEFAULT_CLOCK_DIVIDER};
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
 use embassy_net::{Config, Stack, StackResources};
@@ -17,21 +17,20 @@ const WIFI_NETWORK: &str = env!("WIFI_NETWORK");
 const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
 
 #[embassy_executor::task]
-async fn wifi_task(
-    runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>,
-) -> ! {
+async fn cyw43_task(runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>) -> ! {
     runner.run().await
 }
 
 #[embassy_executor::task]
-async fn net_task(stack: &'static Stack<NetDriver<'static>>) -> ! {
-    stack.run().await
+async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'static>>) -> ! {
+    runner.run().await
 }
+
 
 pub async fn init_wifi(
     spawner: Spawner,
     p: WifiResources,
-) -> (Control<'static>, &'static Stack<NetDriver<'static>>) {
+) -> (Control<'static>, Stack<'static>) {
     // To include cyw43 firmware in build (for uf2 builds)
 
     //let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
@@ -50,6 +49,7 @@ pub async fn init_wifi(
     let spi = PioSpi::new(
         &mut pio.common,
         pio.sm0,
+        DEFAULT_CLOCK_DIVIDER,
         pio.irq0,
         cs,
         p.dio_pin,
@@ -57,10 +57,11 @@ pub async fn init_wifi(
         p.dma_ch,
     );
 
+
     static STATE: StaticCell<cyw43::State> = StaticCell::new();
     let state = STATE.init(cyw43::State::new());
     let (net_device, mut control, runner) = cyw43::new(state, pwr, spi, fw).await;
-    unwrap!(spawner.spawn(wifi_task(runner)));
+    unwrap!(spawner.spawn(cyw43_task(runner)));
 
     control.init(clm).await;
     control
@@ -73,19 +74,13 @@ pub async fn init_wifi(
     let seed = rng.next_u64();
 
     // Init network stack
-    static STACK: StaticCell<Stack<NetDriver<'static>>> = StaticCell::new();
     static RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
-    let stack = &*STACK.init(Stack::new(
-        net_device,
-        config,
-        RESOURCES.init(StackResources::<5>::new()),
-        seed,
-    ));
 
-    unwrap!(spawner.spawn(net_task(stack)));
+    let (stack, runner) = embassy_net::new(net_device, config, RESOURCES.init(StackResources::new()), seed);
+    unwrap!(spawner.spawn(net_task(runner)));
 
     loop {
-        match control.join_wpa2(WIFI_NETWORK, WIFI_PASSWORD).await {
+        match control.join(WIFI_NETWORK, JoinOptions::new(WIFI_PASSWORD.as_bytes())).await {
             Ok(_) => break,
             Err(err) => {
                 info!("join failed with status={}", err.status);
