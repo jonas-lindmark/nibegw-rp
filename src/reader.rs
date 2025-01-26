@@ -1,8 +1,8 @@
+use crate::reader::Error::{ChecksumMismatch, ReadError};
+use crate::START;
 use defmt::debug;
 use embedded_io_async::BufRead;
 use log::warn;
-use crate::reader::Error::{ChecksumMismatch, ReadError};
-use crate::START;
 
 pub enum MessageType {
     ReadToken,
@@ -10,12 +10,12 @@ pub enum MessageType {
     Other,
 }
 
-pub struct Message {
+pub struct ModbusMessage {
     pub length: usize,
     buf: [u8; 2048],
 }
 
-impl Message {
+impl ModbusMessage {
     pub fn raw_frame(&self) -> &[u8] {
         &self.buf[..self.length]
     }
@@ -77,7 +77,7 @@ where
     /// Read message from reader
     ///
     /// This function is cancel-safe.
-    pub async fn next_message(&mut self) -> Result<Option<Message>, Error<R>> {
+    pub async fn next_message(&mut self) -> Result<Option<ModbusMessage>, Error<R>> {
         loop {
             match self.buffer {
                 Some(ref mut buffer) => 'fill_buf: loop {
@@ -110,7 +110,7 @@ where
                                 self.buffer = None;
                                 return Err(ChecksumMismatch);
                             }
-                            let readout = Message {
+                            let readout = ModbusMessage {
                                 length: buffer.len.unwrap(),
                                 buf: buffer.data,
                             };
@@ -151,7 +151,10 @@ fn is_valid_checksum(data: &[u8], message_checksum: u8) -> bool {
     if computed_checksum == 0x5c && message_checksum == 0xc5 {
         return true;
     }
-    debug!("Computed checksum {=u8:x} != {=u8:x}", computed_checksum, message_checksum);
+    debug!(
+        "Computed checksum {=u8:x} != {=u8:x}",
+        computed_checksum, message_checksum
+    );
     false
 }
 

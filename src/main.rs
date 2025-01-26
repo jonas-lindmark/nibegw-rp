@@ -18,8 +18,8 @@ use embassy_time::{Duration, Timer};
 #[allow(unused_imports)]
 use {defmt_rtt as _, panic_probe as _};
 
-use crate::network::{init_network, remote_endpoint, EndpointType};
-use crate::reader::{AsyncReader, Error, Message, MessageType};
+use crate::network::{init_network, remote_endpoint};
+use crate::reader::{AsyncReader, Error, MessageType, ModbusMessage};
 use crate::serial::{init_serial, SerialTx};
 use crate::wifi::init_wifi;
 
@@ -34,9 +34,10 @@ const NACK: u8 = 0x15;
 const ADDRESS_MODBUS40: u16 = 0x0020;
 
 static WATCHDOG_COUNTER: Mutex<ThreadModeRawMutex, RefCell<u32>> = Mutex::new(RefCell::new(0));
-static READ_CHANNEL: Channel<CriticalSectionRawMutex, Packet, 1> = Channel::new();
-static WRITE_CHANNEL: Channel<CriticalSectionRawMutex, Packet, 1> = Channel::new();
-type ReceiverType<'a> = Receiver<'a, CriticalSectionRawMutex, Packet, 1>;
+static READ_CHANNEL: Channel<CriticalSectionRawMutex, NetworkMessage, 1> = Channel::new();
+static WRITE_CHANNEL: Channel<CriticalSectionRawMutex, NetworkMessage, 1> = Channel::new();
+static SEND_CHANNEL: Channel<CriticalSectionRawMutex, ModbusMessage, 1> = Channel::new();
+type ReceiverType<'a> = Receiver<'a, CriticalSectionRawMutex, NetworkMessage, 1>;
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => pio::InterruptHandler<PIO0>;
@@ -69,7 +70,7 @@ assign_resources! {
     }
 }
 
-struct Packet {
+struct NetworkMessage {
     length: usize,
     buf: [u8; 2048],
 }
@@ -79,46 +80,46 @@ async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
     let r = split_resources!(p);
 
-    let mut led_green = Output::new(r.led.green, Level::Low);
-    let mut led_red = Output::new(r.led.red, Level::Low);
-
-    led_red.set_high();
-
     spawner.spawn(watchdog_task(r.watchdog)).unwrap();
+    spawner.must_spawn(modbus_task(r.led, r.uart, r.uart_dir));
 
     let (mut control, stack) = init_wifi(spawner, r.wifi).await;
     control.gpio_set(0, true).await;
 
     let sockets = init_network(stack);
 
-    let remote_endpoint = remote_endpoint();
-
     control.gpio_set(0, false).await;
-
-    led_red.set_low();
-
-    let (tx, rx) = init_serial(r.uart).await.split();
-    let mut uart_tx = SerialTx::new(tx, Output::new(r.uart_dir.dir_pin, Level::Low));
-    let mut reader = AsyncReader::new(rx);
 
     spawner.must_spawn(udp_read_task(sockets.read_socket));
     spawner.must_spawn(udp_write_task(sockets.write_socket));
+    spawner.must_spawn(udp_send_task(sockets.send_socket));
+}
+
+#[embassy_executor::task]
+async fn modbus_task(led: LedResources, uart: UartResources, uart_dir: UartDirResources) {
+    let mut led_green = Output::new(led.green, Level::Low);
+    let mut led_red = Output::new(led.red, Level::Low);
+
+    let (tx, rx) = init_serial(uart).await.split();
+    let mut uart_tx = SerialTx::new(tx, Output::new(uart_dir.dir_pin, Level::Low));
+    let mut reader = AsyncReader::new(rx);
 
     let read_receiver = READ_CHANNEL.receiver();
     let write_receiver = WRITE_CHANNEL.receiver();
+    let send_sender = SEND_CHANNEL.sender();
 
     loop {
         clear_watchdog();
 
         match reader.next_message().await {
             Ok(opt) => match opt {
-                Some(message) => {
-                    if message.address() != ADDRESS_MODBUS40 {
-                        debug!("Skipping packet addressed to {}", message.address());
+                Some(msg) => {
+                    if msg.address() != ADDRESS_MODBUS40 {
+                        debug!("Skipping packet addressed to {}", msg.address());
                         return;
                     }
 
-                    match message.message_type() {
+                    match msg.message_type() {
                         MessageType::ReadToken => {
                             send_queued_message_to_pump_or_ack(&read_receiver, &mut uart_tx).await
                         }
@@ -126,13 +127,10 @@ async fn main(spawner: Spawner) {
                             send_queued_message_to_pump_or_ack(&write_receiver, &mut uart_tx).await
                         }
                         MessageType::Other => {
-                            relay_message_to_server_and_ack(
-                                &sockets.send_socket,
-                                remote_endpoint,
-                                &mut uart_tx,
-                                &message,
-                            )
-                            .await;
+                            if !SEND_CHANNEL.is_full() {
+                                send_sender.send(msg).await;
+                            }
+                            uart_tx.write_byte(ACK).await;
                         }
                     }
                     flash_led(&mut led_green).await;
@@ -165,7 +163,7 @@ async fn udp_read_task(socket: UdpSocket<'static>) {
     loop {
         let (n, ep) = socket.recv_from(&mut buf).await.unwrap();
         debug!("Got UDP read message from {}: {=[u8]:02x}", ep, &buf[..n]);
-        sender.send(Packet { length: n, buf }).await;
+        sender.send(NetworkMessage { length: n, buf }).await;
     }
 }
 
@@ -176,7 +174,21 @@ async fn udp_write_task(socket: UdpSocket<'static>) {
     loop {
         let (n, ep) = socket.recv_from(&mut buf).await.unwrap();
         debug!("Got UDP write message from {}: {=[u8]:02x}", ep, &buf[..n]);
-        sender.send(Packet { length: n, buf }).await;
+        sender.send(NetworkMessage { length: n, buf }).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn udp_send_task(socket: UdpSocket<'static>) {
+    let receiver = SEND_CHANNEL.receiver();
+    let endpoint = remote_endpoint();
+    loop {
+        let msg = receiver.receive().await;
+        debug!("Sending to {:?}: {=[u8]:02x}", endpoint, msg.raw_frame());
+        let result = socket.send_to(&msg.raw_frame(), endpoint).await;
+        if let Err(err) = result {
+            error!("Failed to send UDP packet: {:?}", err);
+        };
     }
 }
 
@@ -217,29 +229,11 @@ async fn send_queued_message_to_pump_or_ack(
     receiver: &ReceiverType<'_>,
     serial_tx: &mut SerialTx<'_>,
 ) {
-    if let Ok(packet) = receiver.try_receive() {
-        serial_tx.write(&packet.buf[..packet.length]).await;
+    if let Ok(msg) = receiver.try_receive() {
+        serial_tx.write(&msg.buf[..msg.length]).await;
     } else {
         serial_tx.write_byte(ACK).await;
     }
-}
-
-async fn relay_message_to_server_and_ack(
-    socket: &UdpSocket<'_>,
-    remote_endpoint: EndpointType,
-    serial_tx: &mut SerialTx<'_>,
-    message: &Message,
-) {
-    debug!(
-        "Sending to {:?}: {=[u8]:02x}",
-        remote_endpoint,
-        message.raw_frame()
-    );
-    let result = socket.send_to(message.raw_frame(), remote_endpoint).await;
-    if let Err(err) = result {
-        error!("Failed to send UDP packet: {:?}", err);
-    };
-    serial_tx.write_byte(ACK).await;
 }
 
 async fn flash_led(led: &mut Output<'_>) {
