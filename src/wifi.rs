@@ -1,4 +1,4 @@
-use cyw43::{Control, JoinOptions};
+use cyw43::JoinOptions;
 use cyw43_pio::{PioSpi, DEFAULT_CLOCK_DIVIDER};
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
@@ -17,7 +17,9 @@ const WIFI_NETWORK: &str = env!("WIFI_NETWORK");
 const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
 
 #[embassy_executor::task]
-async fn cyw43_task(runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>) -> ! {
+async fn cyw43_task(
+    runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>,
+) -> ! {
     runner.run().await
 }
 
@@ -26,11 +28,7 @@ async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'sta
     runner.run().await
 }
 
-
-pub async fn init_wifi(
-    spawner: Spawner,
-    p: WifiResources,
-) -> (Control<'static>, Stack<'static>) {
+pub async fn init_wifi(spawner: Spawner, p: WifiResources) -> Stack<'static> {
     // To include cyw43 firmware in build (for uf2 builds)
 
     //let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
@@ -57,7 +55,6 @@ pub async fn init_wifi(
         p.dma_ch,
     );
 
-
     static STATE: StaticCell<cyw43::State> = StaticCell::new();
     let state = STATE.init(cyw43::State::new());
     let (net_device, mut control, runner) = cyw43::new(state, pwr, spi, fw).await;
@@ -68,6 +65,8 @@ pub async fn init_wifi(
         .set_power_management(cyw43::PowerManagementMode::None)
         .await;
 
+    control.gpio_set(0, true).await;
+
     let config = Config::dhcpv4(Default::default());
     // Generate random seed
     let mut rng = RoscRng;
@@ -76,11 +75,19 @@ pub async fn init_wifi(
     // Init network stack
     static RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
 
-    let (stack, runner) = embassy_net::new(net_device, config, RESOURCES.init(StackResources::new()), seed);
+    let (stack, runner) = embassy_net::new(
+        net_device,
+        config,
+        RESOURCES.init(StackResources::new()),
+        seed,
+    );
     unwrap!(spawner.spawn(net_task(runner)));
 
     loop {
-        match control.join(WIFI_NETWORK, JoinOptions::new(WIFI_PASSWORD.as_bytes())).await {
+        match control
+            .join(WIFI_NETWORK, JoinOptions::new(WIFI_PASSWORD.as_bytes()))
+            .await
+        {
             Ok(_) => break,
             Err(err) => {
                 info!("join failed with status={}", err.status);
@@ -103,5 +110,7 @@ pub async fn init_wifi(
         }
         Timer::after(Duration::from_millis(500)).await;
     }
-    (control, stack)
+
+    control.gpio_set(0, false).await;
+    stack
 }

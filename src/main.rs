@@ -83,13 +83,9 @@ async fn main(spawner: Spawner) {
     spawner.spawn(watchdog_task(r.watchdog)).unwrap();
     spawner.must_spawn(modbus_task(r.led, r.uart, r.uart_dir));
 
-    let (mut control, stack) = init_wifi(spawner, r.wifi).await;
-    control.gpio_set(0, true).await;
+    let stack = init_wifi(spawner, r.wifi).await;
 
     let sockets = init_network(stack);
-
-    control.gpio_set(0, false).await;
-
     spawner.must_spawn(udp_read_task(sockets.read_socket));
     spawner.must_spawn(udp_write_task(sockets.write_socket));
     spawner.must_spawn(udp_send_task(sockets.send_socket));
